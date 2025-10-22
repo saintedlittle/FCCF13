@@ -4,6 +4,10 @@ on:
   push:
     branches:
       - main
+  workflow_dispatch:
+
+permissions:
+  contents: write   # нужно для создания тега и релиза
 
 jobs:
   build:
@@ -16,11 +20,10 @@ jobs:
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '26.0.1'  # или конкретную: '16.2'
+          xcode-version: '26.0.1'  # при необходимости укажите конкретную, напр. '16.2'
 
       - name: List schemes (debug)
-        run: |
-          xcodebuild -list -project "OneDay.xcodeproj"
+        run: xcodebuild -list -project "OneDay.xcodeproj"
 
       - name: Build archive (no code signing)
         env:
@@ -58,7 +61,7 @@ jobs:
           mkdir -p "$OUT_DIR/Payload"
           cp -R "$APP_PATH" "$OUT_DIR/Payload/"
 
-          # (опционально) положим dSYM рядом
+          # (опционально) dSYM рядом
           DSYM_DIR="$ARCHIVE_PATH/dSYMs"
           if [ -d "$DSYM_DIR" ]; then
             cp -R "$DSYM_DIR" "$OUT_DIR/"
@@ -68,13 +71,29 @@ jobs:
           /usr/bin/zip -r "OneDay-unsigned.ipa" "Payload"
           popd >/dev/null
 
-          echo "IPA: $OUT_DIR/OneDay-unsigned.ipa"
+          echo "IPA path: $OUT_DIR/OneDay-unsigned.ipa"
 
-      - name: Upload unsigned IPA
-        uses: actions/upload-artifact@v4
+      - name: Create tag for this build
+        id: maketag
+        run: |
+          set -euo pipefail
+          TAG="unsigned-${GITHUB_RUN_NUMBER}"
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git tag -a "$TAG" -m "Unsigned IPA build $GITHUB_RUN_NUMBER"
+          git push origin "$TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release and upload IPA
+        uses: softprops/action-gh-release@v2
         with:
-          name: OneDay-unsigned-ipa
-          path: |
+          tag_name: ${{ steps.maketag.outputs.tag }}
+          name: "Unsigned IPA – ${{ steps.maketag.outputs.tag }}"
+          body: |
+            Автоматическая сборка без подписи.
+            Commit: ${{ github.sha }}
+          draft: false
+          prerelease: false
+          files: |
             build/ipa/OneDay-unsigned.ipa
             build/ipa/dSYMs/**
-          if-no-files-found: error
