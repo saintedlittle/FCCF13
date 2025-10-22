@@ -11,51 +11,70 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '26.0.1'   # Используйте нужную версию Xcode
+          xcode-version: '26.0.1'  # или конкретную: '16.2'
 
       - name: List schemes (debug)
         run: |
-          xcodebuild -list -project OneDay.xcodeproj
+          xcodebuild -list -project "OneDay.xcodeproj"
 
-      - name: Build archive
+      - name: Build archive (no code signing)
+        env:
+          ARCHIVE_PATH: ${{ github.workspace }}/build/OneDay.xcarchive
         run: |
+          set -euo pipefail
           xcodebuild archive \
-            -project OneDay.xcodeproj \
+            -project "OneDay.xcodeproj" \
             -scheme "One Day" \
             -configuration Release \
-            -archivePath "$GITHUB_WORKSPACE/build/OneDay.xcarchive" \
+            -archivePath "$ARCHIVE_PATH" \
+            -destination "generic/platform=iOS" \
+            CODE_SIGNING_ALLOWED=NO \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_ALLOWED=NO
+            DEVELOPMENT_TEAM="" \
+            PROVISIONING_PROFILE_SPECIFIER="" \
+            PROVISIONING_PROFILE="" \
+            CODE_SIGN_STYLE=Manual \
+            SKIP_INSTALL=NO \
+            BUILD_LIBRARY_FOR_DISTRIBUTION=NO
 
-      - name: Export unsigned IPA
+      - name: Package unsigned IPA (zip .app → .ipa)
+        env:
+          ARCHIVE_PATH: ${{ github.workspace }}/build/OneDay.xcarchive
+          OUT_DIR: ${{ github.workspace }}/build/ipa
         run: |
-          cat > ExportOptions.plist <<EOF
-          <?xml version="1.0" encoding="UTF-8"?>
-          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-          <plist version="1.0">
-          <dict>
-            <key>method</key>
-            <string>debugging</string>
-            <key>signingStyle</key>
-            <string>manual</string>
-            <key>stripSwiftSymbols</key>
-            <true/>
-            <key>compileBitcode</key>
-            <false/>
-          </dict>
-          </plist>
-          EOF
+          set -euo pipefail
+          APP_DIR="$ARCHIVE_PATH/Products/Applications"
+          APP_PATH="$(/usr/bin/find "$APP_DIR" -maxdepth 1 -name "*.app" -print -quit)"
+          if [ -z "${APP_PATH:-}" ]; then
+            echo "No .app found in $APP_DIR"; exit 1
+          fi
 
-          xcodebuild -exportArchive \
-            -archivePath "$GITHUB_WORKSPACE/build/OneDay.xcarchive" \
-            -exportOptionsPlist ExportOptions.plist \
-            -exportPath "$GITHUB_WORKSPACE/build/ipa" \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            CODE_SIGNING_ALLOWED=NO
+          mkdir -p "$OUT_DIR/Payload"
+          cp -R "$APP_PATH" "$OUT_DIR/Payload/"
+
+          # (опционально) положим dSYM рядом
+          DSYM_DIR="$ARCHIVE_PATH/dSYMs"
+          if [ -d "$DSYM_DIR" ]; then
+            cp -R "$DSYM_DIR" "$OUT_DIR/"
+          fi
+
+          pushd "$OUT_DIR" >/dev/null
+          /usr/bin/zip -r "OneDay-unsigned.ipa" "Payload"
+          popd >/dev/null
+
+          echo "IPA: $OUT_DIR/OneDay-unsigned.ipa"
+
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: OneDay-unsigned-ipa
+          path: |
+            build/ipa/OneDay-unsigned.ipa
+            build/ipa/dSYMs/**
+          if-no-files-found: error
