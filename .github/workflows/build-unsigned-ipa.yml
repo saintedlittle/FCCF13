@@ -16,7 +16,7 @@ jobs:
       - name: Set up Xcode version
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: '14.2'   # Укажите версию под ваши нужды
+          xcode-version: '26.0.1'   # Укажите версию под ваши нужды
 
       - name: Build archive
         run: |
